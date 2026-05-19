@@ -85,7 +85,12 @@ export function useGameState(roomId: string) {
         setAborted(null);
       }
     }
-    function onError(payload: { message: string }) { toast.error(payload.message); }
+    function onError(payload: { message: string }) {
+      toast.error(payload.message);
+      if (payload.message === "You were removed from the room") {
+        router.push("/");
+      }
+    }
     function onJoinRejected() {
       toast.error("Your join request was rejected");
       router.push("/");
