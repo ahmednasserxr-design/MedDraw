@@ -23,6 +23,11 @@ app.prepare().then(() => {
       credentials: true,
     },
     transports: ["websocket", "polling"],
+    // Detect dead clients quickly — default is 25s+20s = up to 45s, which
+    // leaves the room stuck on stale host state for far too long after a tab
+    // close. 5s+5s detects most disconnects within ~10s.
+    pingInterval: 5000,
+    pingTimeout: 5000,
   });
 
   registerSocketHandlers(io);

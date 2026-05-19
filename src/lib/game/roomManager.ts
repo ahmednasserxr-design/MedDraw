@@ -50,6 +50,12 @@ type GameRoom = {
   choiceStartedAt: number | null;
   pendingJoins: Array<{ socketId: string; nickname: string; userId: string | null }>;
   voiceParticipants: Set<string>;
+  /** Recently disconnected players, keyed by userId || nickname-lowercase.
+   *  Lets a player who refreshed reclaim their seat (and score, and host role)
+   *  within a short grace window without re-approval. */
+  recentLeavers: Map<string, { player: Player; ts: number; wasHost: boolean }>;
+  /** Deferred-cleanup timer when room becomes empty but recent leavers exist. */
+  emptyCleanupHandle: NodeJS.Timeout | null;
   // Post-game rematch
   rematchVotes: Set<string>;
   rematchTimerHandle: NodeJS.Timeout | null;
@@ -184,6 +190,26 @@ function sanitizeCategories(c: unknown): WordCategory[] {
   return Array.from(new Set(filtered));
 }
 
+/** Key for the recent-leavers cache. Prefers userId for logged-in users
+ *  (survives nickname changes) and falls back to nickname for guests. */
+function leaverKey(userId: string | null, nickname: string): string {
+  return userId ? `u:${userId}` : `n:${nickname.trim().toLowerCase()}`;
+}
+
+const REJOIN_GRACE_MS = 90_000;
+
+/** Pull a recent-leaver entry if it's still within the grace window. */
+function consumeRecentLeaver(
+  room: GameRoom, userId: string | null, nickname: string,
+): { player: Player; wasHost: boolean } | null {
+  const key = leaverKey(userId, nickname);
+  const entry = room.recentLeavers.get(key);
+  if (!entry) return null;
+  room.recentLeavers.delete(key);
+  if (Date.now() - entry.ts > REJOIN_GRACE_MS) return null;
+  return { player: entry.player, wasHost: entry.wasHost };
+}
+
 function findRoomBySocketId(socketId: string): GameRoom | undefined {
   const roomId = socketRoomBinding.get(socketId);
   if (!roomId) return undefined;
@@ -204,6 +230,7 @@ function leaveCurrentRoom(io: IO, socket: RoomSocket) {
   }
 
   const player = room.players.get(socket.id);
+  const wasHost = room.hostSocketId === socket.id;
   room.players.delete(socket.id);
   if (room.voiceParticipants.has(socket.id)) {
     room.voiceParticipants.delete(socket.id);
@@ -213,9 +240,27 @@ function leaveCurrentRoom(io: IO, socket: RoomSocket) {
   socketRoomBinding.delete(socket.id);
   socket.leave(room.id);
 
-  if (player) systemMessage(io, room.id, `${player.nickname} left`);
+  if (player) {
+    systemMessage(io, room.id, `${player.nickname} left`);
+    // Remember them briefly so a refresh/reconnect can reclaim the seat
+    // without going through host approval and without losing their score.
+    const key = leaverKey(player.userId, player.nickname);
+    room.recentLeavers.set(key, { player: { ...player }, ts: Date.now(), wasHost });
+  }
 
   if (room.players.size === 0) {
+    // Defer cleanup so a lone player who just refreshed can reclaim the room
+    // (their recent-leaver entry is still valid for REJOIN_GRACE_MS). If
+    // nobody rejoins in time, the room is freed.
+    if (room.recentLeavers.size > 0 && room.status !== "ended") {
+      if (room.emptyCleanupHandle) clearTimeout(room.emptyCleanupHandle);
+      room.emptyCleanupHandle = setTimeout(() => {
+        const r = rooms.get(room.id);
+        if (r && r.players.size === 0) cleanupRoom(r, io);
+      }, REJOIN_GRACE_MS);
+      broadcastRoomList(io);
+      return;
+    }
     cleanupRoom(room, io);
     return;
   }
@@ -226,6 +271,7 @@ function leaveCurrentRoom(io: IO, socket: RoomSocket) {
     if (next) {
       next.isHost = true;
       room.hostSocketId = next.socketId;
+      room.hostNickname = next.nickname;
       systemMessage(io, room.id, `${next.nickname} is now host`);
     }
   }
@@ -267,6 +313,7 @@ function cleanupRoom(room: GameRoom, io?: IO) {
   if (room.tickHandle) clearInterval(room.tickHandle);
   if (room.choiceTimeoutHandle) clearTimeout(room.choiceTimeoutHandle);
   if (room.rematchTimerHandle) clearInterval(room.rematchTimerHandle);
+  if (room.emptyCleanupHandle) clearTimeout(room.emptyCleanupHandle);
   rooms.delete(room.id);
   codeToRoomId.delete(room.inviteCode);
   if (io) broadcastRoomList(io);
@@ -573,6 +620,8 @@ export function registerSocketHandlers(io: IO) {
           rematchVotes: new Set(),
           rematchTimerHandle: null,
           rematchCountdown: 0,
+          recentLeavers: new Map(),
+          emptyCleanupHandle: null,
           createdAt: Date.now(),
         };
         const host: Player = {
@@ -597,9 +646,7 @@ export function registerSocketHandlers(io: IO) {
     socket.on("room:join", (payload, ack) => {
       const room = rooms.get(payload.roomId);
       if (!room) { ack({ ok: false, error: "Room not found" }); return; }
-      if (room.status === "in_progress") { ack({ ok: false, error: "Game is already in progress" }); return; }
       if (room.status === "ended") { ack({ ok: false, error: "Game has ended" }); return; }
-      if (room.players.size >= room.maxPlayers) { ack({ ok: false, error: "Room is full" }); return; }
 
       const currentRoomId = socketRoomBinding.get(socket.id);
       if (currentRoomId === room.id && room.players.has(socket.id)) {
@@ -607,6 +654,36 @@ export function registerSocketHandlers(io: IO) {
         ack({ ok: true });
         return;
       }
+
+      // Grace-window rejoin: refresh / reconnect picks up the previous seat
+      // with score intact, skips approval, and works even mid-game.
+      const returning = consumeRecentLeaver(room, payload.userId ?? null, payload.nickname || "");
+      if (returning) {
+        const restored: Player = {
+          ...returning.player,
+          socketId: socket.id,
+          isHost: returning.wasHost && !room.players.size /* if alone, retake host */,
+          hasGuessedThisTurn: false,
+        };
+        room.players.set(socket.id, restored);
+        socketRoomBinding.set(socket.id, room.id);
+        socket.join(room.id);
+        // If the room was empty and they were host, reclaim the crown.
+        if (restored.isHost) {
+          room.hostSocketId = socket.id;
+          room.hostNickname = restored.nickname;
+        }
+        socket.emit("room:joined", buildSnapshot(room));
+        systemMessage(io, room.id, `${restored.nickname} rejoined`);
+        broadcastRoom(io, room);
+        broadcastRoomList(io);
+        ack({ ok: true });
+        return;
+      }
+
+      // From here on, normal new-join rules apply.
+      if (room.status === "in_progress") { ack({ ok: false, error: "Game is already in progress" }); return; }
+      if (room.players.size >= room.maxPlayers) { ack({ ok: false, error: "Room is full" }); return; }
       if (!room.isPrivate) {
         const nickname = (payload.nickname || "Player").slice(0, 20);
         if (!room.pendingJoins.some((p) => p.socketId === socket.id)) {
@@ -650,9 +727,34 @@ export function registerSocketHandlers(io: IO) {
       if (!roomId) { ack({ ok: false, error: "Invalid invite code" }); return; }
       const room = rooms.get(roomId);
       if (!room) { ack({ ok: false, error: "Room not found" }); return; }
+      if (room.status === "ended") { ack({ ok: false, error: "Game has ended" }); return; }
+
+      // Grace-window rejoin (same as room:join) — preserves seat, score, host.
+      const returning = consumeRecentLeaver(room, payload.userId ?? null, payload.nickname || "");
+      if (returning) {
+        const restored: Player = {
+          ...returning.player,
+          socketId: socket.id,
+          isHost: returning.wasHost && !room.players.size,
+          hasGuessedThisTurn: false,
+        };
+        room.players.set(socket.id, restored);
+        socketRoomBinding.set(socket.id, room.id);
+        socket.join(room.id);
+        if (restored.isHost) {
+          room.hostSocketId = socket.id;
+          room.hostNickname = restored.nickname;
+        }
+        socket.emit("room:joined", buildSnapshot(room));
+        systemMessage(io, room.id, `${restored.nickname} rejoined`);
+        broadcastRoom(io, room);
+        broadcastRoomList(io);
+        ack({ ok: true, roomId });
+        return;
+      }
+
       if (room.players.size >= room.maxPlayers) { ack({ ok: false, error: "Room is full" }); return; }
       if (room.status === "in_progress") { ack({ ok: false, error: "Game is already in progress" }); return; }
-      if (room.status === "ended") { ack({ ok: false, error: "Game has ended" }); return; }
       attachPlayer(io, socket, room, payload.nickname, payload.userId ?? null);
       ack({ ok: true, roomId });
     });
