@@ -1,0 +1,103 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #f6f4ef;
+  --surface: #ffffff;
+  --surface-2: #f0ede6;
+  --fg: #111111;
+  --fg-muted: #5b5b58;
+  --border: #e3dfd5;
+  --accent: #ff5a3c;
+  --accent-fg: #ffffff;
+  --success: #16a34a;
+  --warning: #f59e0b;
+  --ring: #ff5a3c;
+}
+
+.dark {
+  --bg: #0c0c0e;
+  --surface: #15151a;
+  --surface-2: #1d1d24;
+  --fg: #f4f4f5;
+  --fg-muted: #a1a1aa;
+  --border: #2a2a33;
+  --accent: #ff7a5c;
+  --accent-fg: #0c0c0e;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --ring: #ff7a5c;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-ring: var(--ring);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  border-color: var(--border);
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+body {
+  font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pop-in {
+  0% { opacity: 0; transform: scale(0.92); }
+  60% { transform: scale(1.03); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes score-flash {
+  0%, 100% { color: var(--fg); }
+  50% { color: var(--accent); }
+}
+
+@theme inline {
+  --animate-fade-in: fade-in 0.15s ease-out both;
+  --animate-slide-up: slide-up 0.2s ease-out both;
+  --animate-pop-in: pop-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  --animate-slide-in-right: slide-in-right 0.15s ease-out both;
+  --animate-score-flash: score-flash 0.5s ease-in-out;
+}
