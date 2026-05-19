@@ -328,6 +328,8 @@ function commitTurn(io: IO, room: GameRoom, word: string) {
   room.correctGuessCount = 0;
   room.drawerTurnScore = 0;
   room.turnStartedAt = Date.now();
+  // Snapshot scores so per-turn deltas can be reported on turn_end.
+  for (const p of room.players.values()) p.scoreAtTurnStart = p.score;
 
   io.to(room.id).emit("game:turn_start", {
     drawerSocketId: drawerId,
@@ -363,7 +365,10 @@ function endTurn(io: IO, room: GameRoom, opts: { drawerLeft: boolean }) {
   if (drawer) drawer.hasDrawnThisRound = true;
 
   const scores = Array.from(room.players.values()).map((p) => ({
-    socketId: p.socketId, nickname: p.nickname, score: p.score, delta: 0,
+    socketId: p.socketId,
+    nickname: p.nickname,
+    score: p.score,
+    delta: p.score - (p.scoreAtTurnStart ?? p.score),
   }));
   io.to(room.id).emit("game:turn_end", { word, scores });
 

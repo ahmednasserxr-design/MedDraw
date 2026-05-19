@@ -12,6 +12,8 @@ export type Player = {
   hasDrawnThisRound: boolean;
   hasGuessedThisTurn: boolean;
   isHost: boolean;
+  /** Score at start of the current turn — used to compute per-turn delta. Internal field, not sent in snapshots. */
+  scoreAtTurnStart?: number;
 };
 
 export type RoomStatus = "waiting" | "in_progress" | "ended";
