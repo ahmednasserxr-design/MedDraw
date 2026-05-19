@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Shrink } from "lucide-react";
 import { useCanvas } from "@/hooks/useCanvas";
 import { DrawingToolbar } from "./DrawingToolbar";
 import { TurnOverlay } from "./TurnOverlay";
@@ -14,6 +13,10 @@ export function GameCanvas({ api }: { api: GameStateApi }) {
     enabled: isDrawer,
     onBatch: (b) => socket.emit("draw:stroke", b),
     onClear: () => socket.emit("draw:clear"),
+    onResync: (batches) => {
+      socket.emit("draw:clear");
+      for (const b of batches) socket.emit("draw:stroke", b);
+    },
     subscribeStrokes,
     subscribeClear,
   });
@@ -49,21 +52,40 @@ export function GameCanvas({ api }: { api: GameStateApi }) {
             disabled={false}
             onChange={canvas.setSettings}
             onClear={canvas.clearAll}
+            onUndo={canvas.undo}
+            onRedo={canvas.redo}
+            canUndo={canvas.canUndo()}
+            canRedo={canvas.canRedo()}
             onFullscreen={toggleFullscreen}
             onPenOnly={canvas.setPenOnly}
+            isFullscreen={isFullscreen}
           />
         </div>
       )}
 
       {/* Canvas — fixed 4:3 aspect ratio so all users see identical proportions */}
-      <div className="relative w-full aspect-[4/3] rounded-2xl border border-border bg-white overflow-hidden">
+      <div
+        className="relative w-full aspect-[4/3] rounded-2xl border border-border bg-white overflow-hidden select-none"
+        style={{
+          WebkitUserSelect: "none",
+          WebkitTouchCallout: "none",
+          WebkitTapHighlightColor: "transparent",
+        }}
+      >
         <canvas
           ref={canvas.canvasRef}
           onPointerDown={canvas.onPointerDown}
           onPointerMove={canvas.onPointerMove}
           onPointerUp={canvas.onPointerUp}
           onPointerLeave={canvas.onPointerUp}
-          className={`absolute inset-0 h-full w-full ${
+          onContextMenu={(e) => e.preventDefault()}
+          style={{
+            WebkitUserSelect: "none",
+            WebkitTouchCallout: "none",
+            WebkitTapHighlightColor: "transparent",
+            touchAction: "none",
+          }}
+          className={`absolute inset-0 h-full w-full select-none ${
             isDrawer ? "cursor-crosshair touch-none" : "cursor-not-allowed"
           }`}
         />
@@ -77,17 +99,6 @@ export function GameCanvas({ api }: { api: GameStateApi }) {
         <TurnOverlay api={api} />
         <WordChoiceOverlay api={api} />
 
-        {/* Fullscreen exit button in canvas corner */}
-        {isFullscreen && (
-          <button
-            type="button"
-            title="Exit fullscreen"
-            onClick={toggleFullscreen}
-            className="absolute top-2 right-2 z-10 h-8 w-8 inline-flex items-center justify-center rounded-lg border border-border bg-surface/80 backdrop-blur-sm text-fg-muted hover:text-fg cursor-pointer transition-colors duration-100"
-          >
-            <Shrink size={14} />
-          </button>
-        )}
       </div>
     </div>
   );

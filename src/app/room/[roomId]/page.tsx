@@ -39,18 +39,29 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
     if (api.snapshot?.status === "waiting") setWatching(false);
   }, [api.snapshot?.status]);
 
+  // Auto-join voice (receive-only) as soon as we're in the room.
+  // Watching inVoice too so the effect re-fires if a strict-mode cleanup
+  // ran leaveVoice() while `joined` stayed true.
+  useEffect(() => {
+    if (joined && !voice.inVoice) voice.joinVoice();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [joined, voice.inVoice]);
+
   // Attempt auto-join when connected and we have a nickname
   useEffect(() => {
     if (loading) return;
     if (!connected) return;
     if (joined) return;
-    if (pendingApproval) return;
     if (!nickname) return;
+    // If we appear in the snapshot, we're in the room. This covers both the
+    // normal case and the post-approval case (where pendingApproval is still
+    // true but the host just approved and the snapshot has us).
     if (api.snapshot && api.snapshot.players.some((p) => p.socketId === socket.id)) {
       setJoined(true);
       setPendingApproval(false);
       return;
     }
+    if (pendingApproval) return;
     setJoining(true);
     socket.emit(
       "room:join",
@@ -242,20 +253,25 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
             </Button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-[200px_1fr_280px] gap-3 flex-1 min-h-0">
-            <div className="hidden md:flex flex-col gap-2">
-              <PlayerList api={api} voice={voice} />
-              <VoiceControls voice={voice} />
+          <div className="grid grid-cols-1 md:grid-cols-[200px_1fr_280px] gap-3">
+            <div className="hidden md:block relative">
+              <div className="absolute inset-0 flex flex-col gap-2">
+                <PlayerList api={api} voice={voice} />
+                <VoiceControls voice={voice} />
+              </div>
             </div>
-            <div className="flex flex-col gap-3 min-h-0">
+            <div className="flex flex-col gap-3">
               <GameCanvas api={api} />
             </div>
-            <div className="flex flex-col min-h-0 gap-2">
-              <div className="md:hidden">
-                <PlayerList api={api} voice={voice} />
+            <div className="relative">
+              <div className="absolute inset-0 flex flex-col gap-2">
+                <div className="md:hidden flex flex-col gap-2">
+                  <PlayerList api={api} voice={voice} />
+                  <VoiceControls voice={voice} />
+                </div>
+                <WordHint api={api} />
+                <ChatPanel api={api} />
               </div>
-              <WordHint api={api} />
-              <ChatPanel api={api} />
             </div>
           </div>
         )}

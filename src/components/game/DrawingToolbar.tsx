@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Eraser, Expand, Paintbrush, PenLine, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Eraser, Expand, Paintbrush, PenLine, Redo2, Shrink, Trash2, Undo2 } from "lucide-react";
 import type { DrawingSettings } from "@/hooks/useCanvas";
 
 const COLORS = [
@@ -25,23 +25,45 @@ const WIDTHS: Array<{ px: number; label: string }> = [
   { px: 12, label: "Thick" },
 ];
 
+const PEN_ONLY_KEY = "meddraw:pen-only";
+
 export function DrawingToolbar({
   onChange,
   onClear,
+  onUndo,
+  onRedo,
   onFullscreen,
   onPenOnly,
+  canUndo,
+  canRedo,
   disabled,
+  isFullscreen,
 }: {
   onChange: (partial: Partial<DrawingSettings>) => void;
   onClear: () => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
   onFullscreen?: () => void;
   onPenOnly?: (val: boolean) => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
   disabled?: boolean;
+  isFullscreen?: boolean;
 }) {
   const [color, setColor] = useState("#111111");
   const [width, setWidth] = useState(4);
   const [tool, setTool] = useState<"pen" | "eraser">("pen");
   const [penOnly, setPenOnly] = useState(false);
+
+  // Load pen-only preference from localStorage on mount
+  useEffect(() => {
+    const saved = typeof window !== "undefined" && localStorage.getItem(PEN_ONLY_KEY) === "true";
+    if (saved) {
+      setPenOnly(true);
+      onPenOnly?.(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function pickColor(c: string) {
     setColor(c);
@@ -59,6 +81,7 @@ export function DrawingToolbar({
   function togglePenOnly() {
     const next = !penOnly;
     setPenOnly(next);
+    if (typeof window !== "undefined") localStorage.setItem(PEN_ONLY_KEY, String(next));
     onPenOnly?.(next);
   }
 
@@ -68,17 +91,17 @@ export function DrawingToolbar({
         disabled ? "opacity-40 pointer-events-none select-none" : ""
       }`}
     >
-      {/* Color swatches */}
-      <div className="flex flex-wrap gap-1">
+      {/* Color swatches — 2 rows × 6 columns, compact */}
+      <div className="grid grid-cols-6 grid-rows-2 gap-1">
         {COLORS.map(({ hex, label }) => (
           <button
             key={hex}
             type="button"
             title={label}
             onClick={() => pickColor(hex)}
-            className={`h-6 w-6 rounded cursor-pointer border transition-all duration-100 ${
+            className={`h-5 w-5 rounded cursor-pointer border transition-all duration-100 ${
               color === hex && tool === "pen"
-                ? "scale-125 ring-2 ring-accent border-accent"
+                ? "scale-125 ring-2 ring-accent border-accent z-10"
                 : "border-border hover:scale-110 hover:border-fg-muted"
             }`}
             style={{ background: hex }}
@@ -146,7 +169,31 @@ export function DrawingToolbar({
 
       <div className="w-px h-6 bg-border shrink-0" />
 
-      {/* Pen-only (stylus) mode */}
+      {/* Undo / Redo */}
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          title="Undo (Ctrl+Z)"
+          onClick={onUndo}
+          disabled={!canUndo}
+          className="h-8 w-8 cursor-pointer inline-flex items-center justify-center rounded-lg border border-border text-fg-muted hover:border-fg-muted hover:bg-surface-2 hover:text-fg transition-all duration-100 disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          <Undo2 size={14} />
+        </button>
+        <button
+          type="button"
+          title="Redo (Ctrl+Y)"
+          onClick={onRedo}
+          disabled={!canRedo}
+          className="h-8 w-8 cursor-pointer inline-flex items-center justify-center rounded-lg border border-border text-fg-muted hover:border-fg-muted hover:bg-surface-2 hover:text-fg transition-all duration-100 disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          <Redo2 size={14} />
+        </button>
+      </div>
+
+      <div className="w-px h-6 bg-border shrink-0" />
+
+      {/* Pen-only (stylus) mode — persisted to localStorage */}
       <button
         type="button"
         title={penOnly ? "Pen-only mode: ON — finger/mouse ignored" : "Enable pen-only mode (stylus/tablet)"}
@@ -173,15 +220,15 @@ export function DrawingToolbar({
         <Trash2 size={14} />
       </button>
 
-      {/* Fullscreen */}
+      {/* Fullscreen toggle — expand when normal, shrink when fullscreen */}
       {onFullscreen && (
         <button
           type="button"
-          title="Expand canvas (fullscreen)"
+          title={isFullscreen ? "Exit fullscreen" : "Expand canvas (fullscreen)"}
           onClick={onFullscreen}
           className="h-8 w-8 cursor-pointer inline-flex items-center justify-center rounded-lg border border-border text-fg-muted hover:border-fg-muted hover:bg-surface-2 hover:text-fg transition-all duration-100"
         >
-          <Expand size={14} />
+          {isFullscreen ? <Shrink size={14} /> : <Expand size={14} />}
         </button>
       )}
     </div>

@@ -268,6 +268,9 @@ function startTurn(io: IO, room: GameRoom) {
   const drawer = room.players.get(drawerId);
   if (!drawer) { endRound(io, room); return; }
 
+  // Mark at start so concurrent/duplicate startTurn calls never pick this player again
+  drawer.hasDrawnThisRound = true;
+
   for (const p of room.players.values()) p.hasGuessedThisTurn = false;
 
   const choices = pickWords(room.selectedCategories, CHOICE_INITIAL);
@@ -284,17 +287,8 @@ function startTurn(io: IO, room: GameRoom) {
   io.to(drawerId).emit("game:word_choices", {
     words: choices,
     canRequestMore: true,
-    secondsLeft: CHOICE_SECONDS,
   });
   systemMessage(io, room.id, `${drawer.nickname} is choosing a word…`);
-
-  if (room.choiceTimeoutHandle) clearTimeout(room.choiceTimeoutHandle);
-  room.choiceTimeoutHandle = setTimeout(() => {
-    if (room.pendingChoices?.drawerSocketId === drawerId) {
-      const auto = room.pendingChoices.words[Math.floor(Math.random() * room.pendingChoices.words.length)];
-      commitTurn(io, room, auto);
-    }
-  }, CHOICE_SECONDS * 1000);
 
   broadcastRoom(io, room);
 }
@@ -741,10 +735,7 @@ export function registerSocketHandlers(io: IO) {
       const fresh = extra.length > 0 ? extra : pickWords(room.selectedCategories, CHOICE_INITIAL, []);
       room.pendingChoices.words = fresh;
       room.pendingChoices.offered = [...actualOffered, ...fresh];
-      const secondsLeft = room.choiceStartedAt
-        ? Math.max(0, CHOICE_SECONDS - Math.floor((Date.now() - room.choiceStartedAt) / 1000))
-        : CHOICE_SECONDS;
-      socket.emit("game:word_choices", { words: fresh, canRequestMore: true, secondsLeft });
+      socket.emit("game:word_choices", { words: fresh, canRequestMore: true });
     });
 
     socket.on("draw:stroke", (batch: StrokeBatch) => {

@@ -4,53 +4,58 @@ import { Mic, MicOff, Volume2, VolumeX } from "lucide-react";
 import type { VoiceApi } from "@/hooks/useVoice";
 
 export function VoiceControls({ voice }: { voice: VoiceApi }) {
-  const activePeers = voice.peers.size;
+  const totalInVoice = voice.peers.size + 1;
+  const connecting = !voice.inVoice;
 
   return (
     <div className="rounded-xl border border-border bg-surface px-3 py-2 flex items-center gap-2">
+      <span className="text-xs text-fg-muted font-medium">
+        {connecting
+          ? "Connecting voice…"
+          : totalInVoice > 1
+            ? `${totalInVoice} in voice`
+            : "Voice"}
+      </span>
+
+      <div className="flex-1" />
+
+      {/* Mic toggle — first click requests permission, subsequent clicks toggle mute */}
       <button
         type="button"
-        onClick={voice.toggleMic}
-        title={voice.enabled ? "Leave voice chat" : "Join voice chat"}
-        className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all duration-150
-          ${voice.enabled
-            ? "bg-accent/10 text-accent hover:bg-accent/20"
-            : "bg-surface-2 text-fg-muted hover:bg-border hover:text-fg"
+        onClick={voice.toggleMicMute}
+        disabled={connecting}
+        title={
+          connecting
+            ? "Joining voice…"
+            : !voice.hasMic
+              ? "Click to unmute your mic"
+              : voice.micMuted
+                ? "Unmute mic"
+                : "Mute mic"
+        }
+        className={`rounded-lg p-1.5 cursor-pointer transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed
+          ${voice.micMuted
+            ? "text-red-500 hover:bg-red-500/10"
+            : "text-green-500 hover:bg-green-500/10"
           }`}
       >
-        {voice.enabled ? <Mic size={13} /> : <MicOff size={13} />}
-        {voice.enabled ? (activePeers > 0 ? `${activePeers + 1} in voice` : "In voice") : "Voice"}
+        {voice.micMuted ? <MicOff size={14} /> : <Mic size={14} />}
       </button>
 
-      {voice.enabled && (
-        <>
-          <button
-            type="button"
-            onClick={voice.toggleMicMute}
-            title={voice.micMuted ? "Unmute mic" : "Mute mic"}
-            className={`rounded-lg p-1.5 transition-all duration-150
-              ${voice.micMuted
-                ? "text-red-500 hover:bg-red-500/10"
-                : "text-fg-muted hover:bg-surface-2 hover:text-fg"
-              }`}
-          >
-            {voice.micMuted ? <MicOff size={14} /> : <Mic size={14} />}
-          </button>
-
-          <button
-            type="button"
-            onClick={voice.toggleGlobalMute}
-            title={voice.globalMute ? "Unmute all" : "Mute all speakers"}
-            className={`rounded-lg p-1.5 transition-all duration-150
-              ${voice.globalMute
-                ? "text-red-500 hover:bg-red-500/10"
-                : "text-fg-muted hover:bg-surface-2 hover:text-fg"
-              }`}
-          >
-            {voice.globalMute ? <VolumeX size={14} /> : <Volume2 size={14} />}
-          </button>
-        </>
-      )}
+      {/* Global mute — silences all peers AND your mic */}
+      <button
+        type="button"
+        onClick={voice.toggleGlobalMute}
+        disabled={connecting}
+        title={voice.globalMute ? "Unmute everyone" : "Mute everyone (also mutes you)"}
+        className={`rounded-lg p-1.5 cursor-pointer transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed
+          ${voice.globalMute
+            ? "text-red-500 hover:bg-red-500/10"
+            : "text-fg-muted hover:bg-surface-2 hover:text-fg"
+          }`}
+      >
+        {voice.globalMute ? <VolumeX size={14} /> : <Volume2 size={14} />}
+      </button>
     </div>
   );
 }

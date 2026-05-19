@@ -29,7 +29,7 @@ export function TurnOverlay({ api }: { api: GameStateApi }) {
 
 function Overlay({ children }: { children: React.ReactNode }) {
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-none animate-fade-in">
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-none animate-fade-in">
       <div className="bg-surface rounded-2xl px-10 py-8 text-center flex flex-col items-center gap-2 shadow-xl border border-border animate-pop-in">
         {children}
       </div>

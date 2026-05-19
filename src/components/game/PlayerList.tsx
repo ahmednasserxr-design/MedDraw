@@ -30,10 +30,10 @@ export function PlayerList({ api, voice }: { api: GameStateApi; voice?: VoiceApi
           const isDrawing = api.turn?.drawerSocketId === p.socketId;
           const guessed = p.hasGuessedThisTurn;
           const isMe = p.socketId === mySocketId;
-          const inVoice = voice?.enabled && (isMe || voice.peers.has(p.socketId));
+          const inVoice = voice?.inVoice && (isMe || voice.peers.has(p.socketId));
           const peerMuted = voice?.mutedPeers.has(p.socketId) ?? false;
           const isSpeaking = isMe
-            ? voice?.enabled && !voice.micMuted
+            ? voice?.hasMic && !voice.micMuted
               ? voice.isSpeakingLocally.current
               : false
             : voice?.speakingPeers.has(p.socketId) ?? false;

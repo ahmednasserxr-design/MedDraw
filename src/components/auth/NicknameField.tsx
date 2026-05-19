@@ -17,8 +17,10 @@ export function NicknameField({
   const { nickname, isGuest, loading } = useAuth();
 
   useEffect(() => {
-    if (!loading && !value && nickname) onChange(nickname);
-  }, [loading, nickname, value, onChange]);
+    if (!loading && nickname) onChange(nickname);
+    // Only pre-fill once when the saved nickname loads — not on every keystroke
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
 
   return (
     <div>

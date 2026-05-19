@@ -22,19 +22,23 @@ export type VoicePeer = {
 export type VoiceApi = ReturnType<typeof useVoice>;
 
 export function useVoice(socket: TypedSocket) {
-  const [enabled, setEnabled] = useState(false);
-  const [micMuted, setMicMuted] = useState(false);
+  // inVoice: receiving audio from peers (true once we've joined the room).
+  // hasMic: we've been granted mic permission and have a local stream attached.
+  // micMuted: our local mic track is muted (always starts true).
+  const [inVoice, setInVoice] = useState(false);
+  const [hasMic, setHasMic] = useState(false);
+  const [micMuted, setMicMuted] = useState(true);
   const [globalMute, setGlobalMute] = useState(false);
   const [mutedPeers, setMutedPeers] = useState<Set<string>>(new Set());
   const [peers, setPeers] = useState<Map<string, VoicePeer>>(new Map());
-
   const [speakingPeers, setSpeakingPeers] = useState<Set<string>>(new Set());
+
   const localStreamRef = useRef<MediaStream | null>(null);
   const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const audioElemsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
   const globalMuteRef = useRef(false);
   const mutedPeersRef = useRef<Set<string>>(new Set());
-  const enabledRef = useRef(false);
+  const inVoiceRef = useRef(false);
   const vadIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isSpeakingRef = useRef(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -51,11 +55,13 @@ export function useVoice(socket: TypedSocket) {
     const pc = new RTCPeerConnection(ICE_CONFIG);
     pcsRef.current.set(remoteSocketId, pc);
 
-    // Add our local tracks so the remote peer can hear us
+    // Attach our outgoing audio if we have it; otherwise receive-only.
     if (localStreamRef.current) {
       for (const track of localStreamRef.current.getTracks()) {
         pc.addTrack(track, localStreamRef.current);
       }
+    } else {
+      pc.addTransceiver("audio", { direction: "recvonly" });
     }
 
     pc.ontrack = (event) => {
@@ -73,7 +79,6 @@ export function useVoice(socket: TypedSocket) {
       audio.autoplay = true;
       applyAudioMute(remoteSocketId, audio);
       audio.play().catch(() => {
-        // Retry once on next user gesture via resumed AudioContext
         const resume = () => { audio!.play().catch(() => {}); document.removeEventListener("click", resume); };
         document.addEventListener("click", resume, { once: true });
       });
@@ -125,21 +130,15 @@ export function useVoice(socket: TypedSocket) {
     isSpeakingRef.current = false;
   }
 
-  async function enableMic() {
-    if (enabledRef.current) return;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      localStreamRef.current = stream;
-      enabledRef.current = true;
-      setEnabled(true);
-      setupVAD(stream);
-      socket.emit("voice:join");
-    } catch {
-      // Mic access denied — silently ignore
-    }
+  function joinVoice() {
+    if (inVoiceRef.current) return;
+    inVoiceRef.current = true;
+    setInVoice(true);
+    socket.emit("voice:join");
   }
 
-  function disableMic() {
+  function leaveVoice() {
+    if (!inVoiceRef.current) return;
     teardownVAD();
     socket.emit("voice:leave");
     for (const pc of pcsRef.current.values()) pc.close();
@@ -154,20 +153,62 @@ export function useVoice(socket: TypedSocket) {
     audioElemsRef.current.clear();
     setPeers(new Map());
     setSpeakingPeers(new Set());
-    enabledRef.current = false;
-    setEnabled(false);
-    setMicMuted(false);
+    inVoiceRef.current = false;
+    setInVoice(false);
+    setMicMuted(true);
+    setHasMic(false);
   }
 
-  function toggleMic() {
-    if (enabledRef.current) {
-      disableMic();
-    } else {
-      void enableMic();
+  // Lazy mic request — fires getUserMedia, adds the track to every existing PC,
+  // and renegotiates by sending fresh offers so peers start hearing us.
+  async function requestMicAndAttach(): Promise<boolean> {
+    if (localStreamRef.current) return true;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      localStreamRef.current = stream;
+      // Start muted — user must explicitly unmute.
+      for (const track of stream.getAudioTracks()) track.enabled = false;
+      setHasMic(true);
+      setupVAD(stream);
+
+      // Attach to existing PCs and renegotiate (one fresh offer per peer).
+      for (const [remoteSocketId, pc] of pcsRef.current.entries()) {
+        for (const track of stream.getTracks()) {
+          pc.addTrack(track, stream);
+        }
+        if (pc.signalingState === "stable") {
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            socket.emit("voice:signal", {
+              targetSocketId: remoteSocketId,
+              signal: pc.localDescription as RTCSessionDescriptionInit,
+            });
+          } catch {
+            // ignore; peer may be gone
+          }
+        }
+      }
+      return true;
+    } catch {
+      return false;
     }
   }
 
-  function toggleMicMute() {
+  async function toggleMicMute() {
+    // No mic yet → request permission, attach tracks, leave muted (one more
+    // click will unmute). If denial, we silently stay receive-only.
+    if (!localStreamRef.current) {
+      const ok = await requestMicAndAttach();
+      if (!ok) return;
+      // After permission, immediately unmute so a single click is enough.
+      const stream = localStreamRef.current as MediaStream | null;
+      if (stream) {
+        for (const track of stream.getAudioTracks()) track.enabled = true;
+      }
+      setMicMuted(false);
+      return;
+    }
     setMicMuted((prev) => {
       const next = !prev;
       if (localStreamRef.current) {
@@ -186,6 +227,7 @@ export function useVoice(socket: TypedSocket) {
     for (const [sid, audio] of audioElemsRef.current.entries()) {
       audio.muted = next || mutedPeersRef.current.has(sid);
     }
+    // Muting all peers also mutes our outgoing mic.
     if (next && localStreamRef.current) {
       for (const track of localStreamRef.current.getAudioTracks()) {
         track.enabled = false;
@@ -197,11 +239,8 @@ export function useVoice(socket: TypedSocket) {
   function togglePeerMute(socketId: string) {
     setMutedPeers((prev) => {
       const next = new Set(prev);
-      if (next.has(socketId)) {
-        next.delete(socketId);
-      } else {
-        next.add(socketId);
-      }
+      if (next.has(socketId)) next.delete(socketId);
+      else next.add(socketId);
       mutedPeersRef.current = next;
       const audio = audioElemsRef.current.get(socketId);
       if (audio) audio.muted = globalMuteRef.current || next.has(socketId);
@@ -210,15 +249,13 @@ export function useVoice(socket: TypedSocket) {
   }
 
   useEffect(() => {
-    // The NEWCOMER creates offers to all existing peers.
-    // Existing peers just create PCs (add their tracks) and wait for the offer.
     async function onVoicePeers(payload: { peers: Array<{ socketId: string; nickname: string }> }) {
       const map = new Map<string, VoicePeer>();
       for (const p of payload.peers) {
         map.set(p.socketId, { socketId: p.socketId, nickname: p.nickname, stream: null });
       }
       setPeers(map);
-      if (!localStreamRef.current) return;
+      // Even without a local mic stream we create PCs so we can hear them.
       for (const p of payload.peers) {
         const pc = createPeerConnection(p.socketId);
         try {
@@ -229,15 +266,13 @@ export function useVoice(socket: TypedSocket) {
             signal: pc.localDescription as RTCSessionDescriptionInit,
           });
         } catch {
-          // Ignore — peer may have already left
+          // ignore
         }
       }
     }
 
     function onVoicePeerJoined(payload: { socketId: string; nickname: string }) {
-      // A new peer joined — create our side of the PC (adds our tracks).
-      // They will send us an offer; we answer in onVoiceSignal.
-      if (!localStreamRef.current) return;
+      // Create our side of the PC (no local stream yet is fine — recvonly).
       createPeerConnection(payload.socketId);
       setPeers((prev) => {
         const next = new Map(prev);
@@ -250,22 +285,10 @@ export function useVoice(socket: TypedSocket) {
 
     function onVoicePeerLeft(payload: { socketId: string }) {
       const pc = pcsRef.current.get(payload.socketId);
-      if (pc) {
-        pc.close();
-        pcsRef.current.delete(payload.socketId);
-      }
+      if (pc) { pc.close(); pcsRef.current.delete(payload.socketId); }
       const audio = audioElemsRef.current.get(payload.socketId);
-      if (audio) {
-        audio.pause();
-        audio.srcObject = null;
-        audio.remove();
-        audioElemsRef.current.delete(payload.socketId);
-      }
-      setPeers((prev) => {
-        const next = new Map(prev);
-        next.delete(payload.socketId);
-        return next;
-      });
+      if (audio) { audio.pause(); audio.srcObject = null; audio.remove(); audioElemsRef.current.delete(payload.socketId); }
+      setPeers((prev) => { const next = new Map(prev); next.delete(payload.socketId); return next; });
     }
 
     async function onVoiceSignal(payload: {
@@ -274,8 +297,6 @@ export function useVoice(socket: TypedSocket) {
     }) {
       const desc = payload.signal as RTCSessionDescriptionInit;
       if (desc.type === "offer") {
-        if (!localStreamRef.current) return;
-        // Use existing PC if already created via onVoicePeerJoined, else create new
         let pc = pcsRef.current.get(payload.fromSocketId);
         if (!pc) pc = createPeerConnection(payload.fromSocketId);
         await pc.setRemoteDescription(new RTCSessionDescription(desc));
@@ -291,7 +312,6 @@ export function useVoice(socket: TypedSocket) {
           await pc.setRemoteDescription(new RTCSessionDescription(desc)).catch(() => {});
         }
       } else {
-        // ICE candidate
         const pc = pcsRef.current.get(payload.fromSocketId);
         if (pc) {
           await pc.addIceCandidate(
@@ -328,20 +348,22 @@ export function useVoice(socket: TypedSocket) {
 
   useEffect(() => {
     return () => {
-      if (enabledRef.current) disableMic();
+      if (inVoiceRef.current) leaveVoice();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return {
-    enabled,
+    inVoice,
+    hasMic,
     micMuted,
     globalMute,
     mutedPeers,
     peers,
     speakingPeers,
     isSpeakingLocally: isSpeakingRef,
-    toggleMic,
+    joinVoice,
+    leaveVoice,
     toggleMicMute,
     toggleGlobalMute,
     togglePeerMute,

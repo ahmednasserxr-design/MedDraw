@@ -60,7 +60,7 @@ export function ChatPanel({ api }: { api: GameStateApi }) {
           </div>
         ))}
       </div>
-      <form onSubmit={send} className="border-t border-border p-2 flex gap-2">
+      <form onSubmit={send} className="sticky bottom-0 z-10 border-t border-border bg-surface/95 backdrop-blur-sm p-2 flex gap-2 rounded-b-2xl">
         <Input
           value={text}
           onChange={(e) => setText(e.target.value.slice(0, 120))}

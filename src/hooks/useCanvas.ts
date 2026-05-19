@@ -21,6 +21,7 @@ export function useCanvas(opts: {
   enabled: boolean;
   onBatch?: (b: StrokeBatch) => void;
   onClear?: () => void;
+  onResync?: (batches: StrokeBatch[]) => void;
   subscribeStrokes: (fn: (b: StrokeBatch) => void) => () => void;
   subscribeClear: (fn: () => void) => () => void;
 }) {
@@ -31,9 +32,13 @@ export function useCanvas(opts: {
   const prevPointRef = useRef<{ x: number; y: number } | null>(null);
   const pendingRef = useRef<Stroke[]>([]);
   const flushTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Queue remote strokes until canvas is properly sized
   const canvasReadyRef = useRef(false);
   const strokeQueueRef = useRef<StrokeBatch[]>([]);
+
+  // Undo / redo history (local stroke sessions only)
+  const currentSessionRef = useRef<Stroke[]>([]);
+  const historyRef = useRef<Stroke[][]>([]);
+  const redoStackRef = useRef<Stroke[][]>([]);
 
   function applyCanvasSize(canvas: HTMLCanvasElement, w: number, h: number) {
     const dpr = window.devicePixelRatio || 1;
@@ -49,7 +54,6 @@ export function useCanvas(opts: {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    // Repaint preserved content
     ctx.drawImage(tmp, 0, 0, tmp.width, tmp.height, 0, 0, w, h);
   }
 
@@ -62,8 +66,6 @@ export function useCanvas(opts: {
       const w = Math.max(1, Math.floor(rect.width));
       const h = Math.max(1, Math.floor(rect.height));
       applyCanvasSize(canvas, w, h);
-
-      // On first real resize, drain any queued remote strokes
       if (!canvasReadyRef.current) {
         canvasReadyRef.current = true;
         for (const batch of strokeQueueRef.current) renderBatch(batch);
@@ -71,21 +73,23 @@ export function useCanvas(opts: {
       }
     });
     ro.observe(parent);
-
-    // Force an immediate size check so the canvas is ready before strokes arrive
     const rect = parent.getBoundingClientRect();
     if (rect.width > 0 && rect.height > 0) {
       applyCanvasSize(canvas, Math.floor(rect.width), Math.floor(rect.height));
       canvasReadyRef.current = true;
     }
-
     return () => ro.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     const unsub = opts.subscribeStrokes((b) => renderBatch(b));
-    const unsubClear = opts.subscribeClear(() => clearCanvasOnly());
+    const unsubClear = opts.subscribeClear(() => {
+      clearCanvasOnly();
+      historyRef.current = [];
+      redoStackRef.current = [];
+      currentSessionRef.current = [];
+    });
     return () => { unsub(); unsubClear(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -104,6 +108,19 @@ export function useCanvas(opts: {
     };
   }, [opts.enabled, opts.onBatch]);
 
+  // Keyboard shortcuts: Ctrl+Z undo, Ctrl+Y / Ctrl+Shift+Z redo
+  useEffect(() => {
+    if (!opts.enabled) return;
+    function onKey(e: KeyboardEvent) {
+      if (!e.ctrlKey && !e.metaKey) return;
+      if (e.key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+      if (e.key === "y" || (e.key === "z" && e.shiftKey)) { e.preventDefault(); redo(); }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opts.enabled]);
+
   function clearCanvasOnly() {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -117,7 +134,6 @@ export function useCanvas(opts: {
   function renderBatch(batch: StrokeBatch) {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    // If canvas not yet sized, queue the batch for replay after resize
     if (!canvasReadyRef.current) {
       strokeQueueRef.current.push(batch);
       return;
@@ -151,6 +167,7 @@ export function useCanvas(opts: {
       e.preventDefault();
       (e.target as HTMLCanvasElement).setPointerCapture?.(e.pointerId);
       drawingRef.current = true;
+      currentSessionRef.current = [];
       prevPointRef.current = pointFromEvent(e);
     },
     [opts.enabled],
@@ -172,6 +189,7 @@ export function useCanvas(opts: {
         width: effectiveTool === "eraser" ? s.width * 3 : s.width,
       };
       pendingRef.current.push(stroke);
+      currentSessionRef.current.push(stroke);
       renderBatch({ strokes: [stroke] });
       prevPointRef.current = cur;
     },
@@ -181,7 +199,30 @@ export function useCanvas(opts: {
   const onPointerUp = useCallback(() => {
     drawingRef.current = false;
     prevPointRef.current = null;
+    if (currentSessionRef.current.length > 0) {
+      historyRef.current.push([...currentSessionRef.current]);
+      redoStackRef.current = []; // new stroke invalidates redo history
+      currentSessionRef.current = [];
+    }
   }, []);
+
+  function undo() {
+    if (!opts.enabled || historyRef.current.length === 0) return;
+    redoStackRef.current.push(historyRef.current.pop()!);
+    clearCanvasOnly();
+    for (const session of historyRef.current) {
+      renderBatch({ strokes: session });
+    }
+    opts.onResync?.(historyRef.current.map((s) => ({ strokes: s })));
+  }
+
+  function redo() {
+    if (!opts.enabled || redoStackRef.current.length === 0) return;
+    const next = redoStackRef.current.pop()!;
+    historyRef.current.push(next);
+    renderBatch({ strokes: next });
+    opts.onResync?.(historyRef.current.map((s) => ({ strokes: s })));
+  }
 
   function setSettings(partial: Partial<DrawingSettings>) {
     settingsRef.current = { ...settingsRef.current, ...partial };
@@ -193,8 +234,18 @@ export function useCanvas(opts: {
 
   function clearAll() {
     clearCanvasOnly();
+    historyRef.current = [];
+    redoStackRef.current = [];
+    currentSessionRef.current = [];
     opts.onClear?.();
   }
 
-  return { canvasRef, onPointerDown, onPointerMove, onPointerUp, setSettings, setPenOnly, clearAll, getSettings: () => settingsRef.current };
+  function canUndo() { return opts.enabled && historyRef.current.length > 0; }
+  function canRedo() { return opts.enabled && redoStackRef.current.length > 0; }
+
+  return {
+    canvasRef, onPointerDown, onPointerMove, onPointerUp,
+    setSettings, setPenOnly, clearAll, undo, redo, canUndo, canRedo,
+    getSettings: () => settingsRef.current,
+  };
 }
