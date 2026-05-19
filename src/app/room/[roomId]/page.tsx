@@ -85,25 +85,60 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
 
   const gameInProgress = api.snapshot?.status === "in_progress";
 
-  // Warn before tab close / navigation away mid-game
+  // Warn before tab close / refresh / navigation away anytime we're in the room
   useEffect(() => {
-    if (!gameInProgress) return;
+    if (!joined) return;
     function handleBeforeUnload(e: BeforeUnloadEvent) {
       e.preventDefault();
       e.returnValue = "";
     }
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [gameInProgress]);
+  }, [joined]);
+
+  // Block browser back/forward — push a sentinel history entry so the first
+  // popstate fires on our page; ask to confirm, then either leave or re-push.
+  useEffect(() => {
+    if (!joined) return;
+    // Push a sentinel so the next "back" press lands on this same URL first.
+    window.history.pushState({ meddrawGuard: true }, "", window.location.href);
+    function handlePopState() {
+      const ok = window.confirm(
+        "Leave this room? You'll need to rejoin from the lobby if it's still active.",
+      );
+      if (ok) {
+        socket.emit("room:leave");
+        router.push("/");
+      } else {
+        // Re-push the sentinel so we stay on this page.
+        window.history.pushState({ meddrawGuard: true }, "", window.location.href);
+      }
+    }
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [joined, socket, router]);
 
   const handleLobbyClick = useCallback(
     (e: React.MouseEvent) => {
       if (gameInProgress && !watching) {
         e.preventDefault();
         setWatching(true);
+        return;
+      }
+      // In waiting room or while watching — confirm before leaving so an
+      // accidental click on "Lobby" doesn't kick the user out silently.
+      if (joined) {
+        const ok = window.confirm(
+          "Leave this room? You'll need to rejoin from the lobby if it's still active.",
+        );
+        if (!ok) {
+          e.preventDefault();
+          return;
+        }
+        socket.emit("room:leave");
       }
     },
-    [gameInProgress, watching],
+    [gameInProgress, watching, joined, socket],
   );
 
   // We intentionally don't emit room:leave on unmount — React strict-mode double
