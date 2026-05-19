@@ -254,21 +254,35 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-[200px_1fr_280px] gap-3">
+            {/* Left column — desktop only. absolute trick prevents the grid
+                row from sizing to chat content (would create a circular
+                dependency with the aspect-ratio canvas). */}
             <div className="hidden md:block relative">
               <div className="absolute inset-0 flex flex-col gap-2">
                 <PlayerList api={api} voice={voice} />
                 <VoiceControls voice={voice} />
               </div>
             </div>
+
             <div className="flex flex-col gap-3">
               <GameCanvas api={api} />
             </div>
-            <div className="relative">
+
+            {/* Mobile right column — normal flow so ChatPanel can actually
+                take height. Absolute positioning here would collapse the
+                stacked layout since children wouldn't contribute height. */}
+            <div className="md:hidden flex flex-col gap-2">
+              <PlayerList api={api} voice={voice} />
+              <VoiceControls voice={voice} />
+              <WordHint api={api} />
+              <div className="h-[55vh] flex flex-col">
+                <ChatPanel api={api} />
+              </div>
+            </div>
+
+            {/* Desktop right column — absolute trick (same reason as left). */}
+            <div className="hidden md:block relative">
               <div className="absolute inset-0 flex flex-col gap-2">
-                <div className="md:hidden flex flex-col gap-2">
-                  <PlayerList api={api} voice={voice} />
-                  <VoiceControls voice={voice} />
-                </div>
                 <WordHint api={api} />
                 <ChatPanel api={api} />
               </div>
