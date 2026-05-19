@@ -237,7 +237,7 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
             <div className="flex flex-col gap-2 w-full max-w-xs">
               <PlayerList api={api} voice={voice} />
             </div>
-            <Button variant="secondary" size="sm" onClick={() => { socket.emit("room:leave"); router.push("/rooms"); }}>
+            <Button variant="secondary" size="sm" onClick={() => { socket.emit("room:leave"); router.push("/"); }}>
               Leave room
             </Button>
           </div>

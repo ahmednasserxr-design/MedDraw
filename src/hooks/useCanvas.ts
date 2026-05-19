@@ -163,10 +163,13 @@ export function useCanvas(opts: {
       const cur = pointFromEvent(e);
       const prev = prevPointRef.current ?? cur;
       const s = settingsRef.current;
+      // Barrel button (bit 32) on stylus pens temporarily switches to eraser
+      const barrelHeld = e.pointerType === "pen" && !!(e.buttons & 32);
+      const effectiveTool = barrelHeld ? "eraser" : s.tool;
       const stroke: Stroke = {
         x: cur.x, y: cur.y, prevX: prev.x, prevY: prev.y,
-        color: s.tool === "eraser" ? "#ffffff" : s.color,
-        width: s.tool === "eraser" ? s.width * 3 : s.width,
+        color: effectiveTool === "eraser" ? "#ffffff" : s.color,
+        width: effectiveTool === "eraser" ? s.width * 3 : s.width,
       };
       pendingRef.current.push(stroke);
       renderBatch({ strokes: [stroke] });

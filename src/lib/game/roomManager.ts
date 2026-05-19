@@ -208,6 +208,12 @@ function leaveCurrentRoom(io: IO, socket: RoomSocket) {
     }
   }
 
+  // Not enough players to continue — abort before any other in-progress logic
+  if (room.status === "in_progress" && room.players.size < 2) {
+    abortGame(io, room);
+    return;
+  }
+
   // Drawer left mid-turn
   if (room.status === "in_progress" && room.currentDrawerSocketId === socket.id) {
     if (room.pendingChoices?.drawerSocketId === socket.id) {
@@ -221,12 +227,6 @@ function leaveCurrentRoom(io: IO, socket: RoomSocket) {
     } else {
       endTurn(io, room, { drawerLeft: true });
     }
-    return;
-  }
-
-  // Only 1 player left during a game — abort immediately
-  if (room.status === "in_progress" && room.players.size < 2) {
-    abortGame(io, room);
     return;
   }
 
