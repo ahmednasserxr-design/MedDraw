@@ -41,7 +41,16 @@ export function RoomCard({ room, flashKey }: { room: PublicRoomSummary; flashKey
     );
   }
 
+  const difficulties = room.selectedDifficulties ?? [];
+  const diffLabel = difficulties.length === 0 || difficulties.length === 3
+    ? "All difficulties"
+    : difficulties.map((d) => d[0].toUpperCase() + d.slice(1)).join(" · ");
   const categories = room.selectedCategories ?? [];
+  const catLabel = categories.length === 0 || categories.length === 8
+    ? null
+    : categories.length === 1
+      ? categories[0].replace(/-/g, " ")
+      : `${categories.length} topics`;
 
   return (
     <div
@@ -66,11 +75,9 @@ export function RoomCard({ room, flashKey }: { room: PublicRoomSummary; flashKey
             {room.hostNickname}
           </span>
         </div>
-        {categories.length > 0 && (
-          <div className="truncate text-xs" title={categories.join(", ")}>
-            {categories.length === 1 ? categories[0].replace(/-/g, " ") : `${categories.length} topics`}
-          </div>
-        )}
+        <div className="truncate text-xs" title={catLabel ? `${catLabel} · ${diffLabel}` : diffLabel}>
+          {catLabel ? `${catLabel} · ${diffLabel}` : diffLabel}
+        </div>
       </div>
       <Button onClick={join} disabled={isFull || isPlaying || joining} size="sm" className="transition-all duration-150 mt-auto">
         {joining ? (

@@ -18,8 +18,8 @@ export type ClientToServerEvents = {
       maxPlayers: number;
       rounds: number;
       isPrivate: boolean;
-      difficulty: Difficulty;
       secondsPerTurn: number;
+      selectedDifficulties: Difficulty[];
       selectedCategories: WordCategory[];
       hostNickname: string;
       hostUserId?: string | null;
@@ -42,6 +42,7 @@ export type ClientToServerEvents = {
   "room:transfer_host": (payload: { socketId: string }) => void;
   "room:set_settings": (payload: {
     secondsPerTurn?: number;
+    selectedDifficulties?: Difficulty[];
     selectedCategories?: WordCategory[];
     totalRounds?: number;
   }) => void;

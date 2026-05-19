@@ -32,8 +32,8 @@ type GameRoom = {
   totalRounds: number;
   currentRound: number;
   status: "waiting" | "in_progress" | "ended";
-  difficulty: Difficulty;
   secondsPerTurn: number;
+  selectedDifficulties: Difficulty[];
   selectedCategories: WordCategory[];
   players: Map<string, Player>;
   drawOrder: string[];
@@ -95,8 +95,8 @@ export function listPublicRooms(): PublicRoomSummary[] {
       playerCount: r.players.size,
       maxPlayers: r.maxPlayers,
       status: r.status,
-      difficulty: r.difficulty,
       totalRounds: r.totalRounds,
+      selectedDifficulties: r.selectedDifficulties,
       selectedCategories: r.selectedCategories,
     }));
 }
@@ -119,7 +119,6 @@ function buildSnapshot(room: GameRoom): RoomSnapshot {
     totalRounds: room.totalRounds,
     currentRound: room.currentRound,
     status: room.status,
-    difficulty: room.difficulty,
     secondsPerTurn: room.secondsPerTurn,
     hostSocketId: room.hostSocketId,
     players: Array.from(room.players.values()),
@@ -127,6 +126,7 @@ function buildSnapshot(room: GameRoom): RoomSnapshot {
     wordMasked: room.currentWord ? maskWord(room.currentWord) : null,
     secondsLeft,
     pendingJoins: room.pendingJoins.map((p) => ({ socketId: p.socketId, nickname: p.nickname })),
+    selectedDifficulties: room.selectedDifficulties,
     selectedCategories: room.selectedCategories,
   };
 }
@@ -160,6 +160,28 @@ function clampRounds(n: number) {
 function clampSeconds(n: number) {
   if (!Number.isFinite(n)) return DEFAULT_SECONDS_PER_TURN;
   return Math.max(30, Math.min(180, Math.floor(n)));
+}
+
+const VALID_DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
+function sanitizeDifficulties(d: unknown): Difficulty[] {
+  if (!Array.isArray(d)) return [...VALID_DIFFICULTIES];
+  const filtered = d.filter((x): x is Difficulty =>
+    typeof x === "string" && (VALID_DIFFICULTIES as string[]).includes(x),
+  );
+  return filtered.length > 0 ? Array.from(new Set(filtered)) : [...VALID_DIFFICULTIES];
+}
+
+const VALID_CATEGORIES: WordCategory[] = [
+  "biology", "chemistry", "physics", "maths",
+  "medicine-academic", "medicine-clinical",
+  "engineering-basic", "engineering-advanced",
+];
+function sanitizeCategories(c: unknown): WordCategory[] {
+  if (!Array.isArray(c)) return [];
+  const filtered = c.filter((x): x is WordCategory =>
+    typeof x === "string" && (VALID_CATEGORIES as string[]).includes(x),
+  );
+  return Array.from(new Set(filtered));
 }
 
 function findRoomBySocketId(socketId: string): GameRoom | undefined {
@@ -273,7 +295,7 @@ function startTurn(io: IO, room: GameRoom) {
 
   for (const p of room.players.values()) p.hasGuessedThisTurn = false;
 
-  const choices = pickWords(room.selectedCategories, CHOICE_INITIAL);
+  const choices = pickWords(room.selectedDifficulties, CHOICE_INITIAL, [], room.selectedCategories);
   room.pendingChoices = { drawerSocketId: drawerId, words: choices, offered: [...choices] };
   room.currentDrawerSocketId = drawerId;
   room.currentWord = null;
@@ -525,9 +547,9 @@ export function registerSocketHandlers(io: IO) {
           totalRounds: clampRounds(payload.rounds),
           currentRound: 1,
           status: "waiting",
-          difficulty: payload.difficulty ?? "medium",
           secondsPerTurn: clampSeconds(payload.secondsPerTurn ?? DEFAULT_SECONDS_PER_TURN),
-          selectedCategories: Array.isArray(payload.selectedCategories) ? payload.selectedCategories : [],
+          selectedDifficulties: sanitizeDifficulties(payload.selectedDifficulties),
+          selectedCategories: sanitizeCategories(payload.selectedCategories),
           players: new Map(),
           drawOrder: [],
           roundDrawOrder: [],
@@ -663,7 +685,12 @@ export function registerSocketHandlers(io: IO) {
       const room = findRoomBySocketId(socket.id);
       if (!room || room.hostSocketId !== socket.id || room.status !== "waiting") return;
       if (payload.secondsPerTurn !== undefined) room.secondsPerTurn = clampSeconds(payload.secondsPerTurn);
-      if (payload.selectedCategories !== undefined) room.selectedCategories = payload.selectedCategories;
+      if (payload.selectedDifficulties !== undefined) {
+        room.selectedDifficulties = sanitizeDifficulties(payload.selectedDifficulties);
+      }
+      if (payload.selectedCategories !== undefined) {
+        room.selectedCategories = sanitizeCategories(payload.selectedCategories);
+      }
       if (payload.totalRounds !== undefined) room.totalRounds = clampRounds(payload.totalRounds);
       broadcastRoom(io, room);
       broadcastRoomList(io);
@@ -729,10 +756,10 @@ export function registerSocketHandlers(io: IO) {
       const room = findRoomBySocketId(socket.id);
       if (!room?.pendingChoices || room.pendingChoices.drawerSocketId !== socket.id) return;
       const offered = room.pendingChoices.offered;
-      const extra = pickWords(room.selectedCategories, CHOICE_INITIAL, offered);
+      const extra = pickWords(room.selectedDifficulties, CHOICE_INITIAL, offered, room.selectedCategories);
       // If we've exhausted the word bank, reset so we can cycle again
       const actualOffered = extra.length > 0 ? offered : [];
-      const fresh = extra.length > 0 ? extra : pickWords(room.selectedCategories, CHOICE_INITIAL, []);
+      const fresh = extra.length > 0 ? extra : pickWords(room.selectedDifficulties, CHOICE_INITIAL, [], room.selectedCategories);
       room.pendingChoices.words = fresh;
       room.pendingChoices.offered = [...actualOffered, ...fresh];
       socket.emit("game:word_choices", { words: fresh, canRequestMore: true });

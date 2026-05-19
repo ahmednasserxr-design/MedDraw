@@ -45,8 +45,8 @@ export type PublicRoomSummary = {
   playerCount: number;
   maxPlayers: number;
   status: RoomStatus;
-  difficulty: Difficulty;
   totalRounds: number;
+  selectedDifficulties: Difficulty[];
   selectedCategories: WordCategory[];
 };
 
@@ -64,7 +64,6 @@ export type RoomSnapshot = {
   totalRounds: number;
   currentRound: number;
   status: RoomStatus;
-  difficulty: Difficulty;
   secondsPerTurn: number;
   hostSocketId: string;
   players: Player[];
@@ -72,6 +71,7 @@ export type RoomSnapshot = {
   wordMasked: string | null;
   secondsLeft: number | null;
   pendingJoins: PendingJoin[];
+  selectedDifficulties: Difficulty[];
   selectedCategories: WordCategory[];
 };
 

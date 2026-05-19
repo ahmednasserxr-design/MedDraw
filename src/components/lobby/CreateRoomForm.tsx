@@ -9,46 +9,41 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import { NicknameField } from "@/components/auth/NicknameField";
-import { CategoryPicker } from "@/components/game/CategoryPicker";
 import { useSocket } from "@/hooks/useSocket";
 import { useAuth } from "@/hooks/useAuth";
-import { countCategoryWords } from "@/lib/game/wordBank";
-import type { WordCategory } from "@/types/game";
 
 export function CreateRoomForm() {
   const router = useRouter();
   const { socket } = useSocket();
   const { userId, setGuestNickname, isGuest } = useAuth();
 
-  const [name, setName] = useState("Surgery Showdown");
+  const [name, setName] = useState("");
   const [nickname, setNickname] = useState("");
   const [maxPlayers, setMaxPlayers] = useState(6);
   const [rounds, setRounds] = useState(3);
   const [secondsPerTurn, setSecondsPerTurn] = useState(80);
   const [isPrivate, setIsPrivate] = useState(false);
-  const [selectedCategories, setSelectedCategories] = useState<WordCategory[]>(["medicine-clinical"]);
   const [loading, setLoading] = useState(false);
-
-  const wordCount = countCategoryWords(selectedCategories);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const nick = nickname.trim();
     if (!nick) { toast.error("Pick a nickname"); return; }
-    if (selectedCategories.length === 0) { toast.error("Select at least one topic"); return; }
+    const roomName = name.trim();
+    if (!roomName) { toast.error("Give your room a name"); return; }
     playSound("click-primary");
     if (isGuest) setGuestNickname(nick);
     setLoading(true);
     socket.emit(
       "room:create",
       {
-        name: name.trim() || "Untitled Room",
+        name: roomName,
         maxPlayers,
         rounds,
         isPrivate,
-        difficulty: "medium",
         secondsPerTurn,
-        selectedCategories,
+        selectedDifficulties: ["easy", "medium", "hard"],
+        selectedCategories: [],
         hostNickname: nick,
         hostUserId: userId ?? undefined,
       },
@@ -65,8 +60,15 @@ export function CreateRoomForm() {
       <NicknameField value={nickname} onChange={setNickname} />
 
       <div>
-        <Label htmlFor="room-name">Room name</Label>
-        <Input id="room-name" value={name} onChange={(e) => setName(e.target.value.slice(0, 40))} maxLength={40} />
+        <Label htmlFor="room-name">Room name <span className="text-red-500">*</span></Label>
+        <Input
+          id="room-name"
+          value={name}
+          onChange={(e) => setName(e.target.value.slice(0, 40))}
+          maxLength={40}
+          placeholder="Give your room a name…"
+          required
+        />
       </div>
 
       <div className="grid grid-cols-3 gap-3">
@@ -93,10 +95,9 @@ export function CreateRoomForm() {
         </div>
       </div>
 
-      <div>
-        <Label>Topics <span className="text-fg-muted font-normal">({wordCount} words available)</span></Label>
-        <CategoryPicker selected={selectedCategories} onChange={setSelectedCategories} />
-      </div>
+      <p className="text-xs text-fg-muted">
+        Topics and difficulty can be adjusted in the waiting room before the game starts.
+      </p>
 
       <label className="flex items-center gap-2 select-none cursor-pointer">
         <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)}
@@ -104,7 +105,7 @@ export function CreateRoomForm() {
         <span className="text-sm">Private — only joinable with invite code</span>
       </label>
 
-      <Button type="submit" disabled={loading || selectedCategories.length === 0} className="w-full" size="lg">
+      <Button type="submit" disabled={loading} className="w-full" size="lg">
         {loading ? <><Loader2 size={15} className="animate-spin" /> Creating…</> : "Create room"}
       </Button>
     </form>
